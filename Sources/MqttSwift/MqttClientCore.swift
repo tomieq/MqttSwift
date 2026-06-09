@@ -23,7 +23,7 @@ actor MqttClientCore {
 
     func send(_ message: MqttMessage) throws {
         try self.ensureConnected()
-        try self.transport?.write(MQTTPacketCodec.publishPacket(message))
+        try self.transport?.write(MQTTPacketCodec.publishPacket(message, protocolVersion: self.config?.protocolVersion ?? .v5))
     }
 
     func subscribe(to topic: String, listener: @escaping @Sendable (MqttMessage) -> Void) throws {
@@ -59,7 +59,7 @@ actor MqttClientCore {
         try newTransport.connect(host: config.host, port: config.port)
         try newTransport.write(MQTTPacketCodec.connectPacket(clientID: self.clientID, config: config, keepAlive: self.keepAlive))
         let connack = try newTransport.readPacket()
-        try MQTTPacketCodec.validateConnack(typeAndFlags: connack.typeAndFlags, body: connack.body)
+        try MQTTPacketCodec.validateConnack(typeAndFlags: connack.typeAndFlags, body: connack.body, protocolVersion: config.protocolVersion)
 
         self.transport?.close()
         self.transport = newTransport
@@ -74,7 +74,7 @@ actor MqttClientCore {
 
     private func writeSubscribe(topic: String) throws {
         let packetID = self.allocatePacketID()
-        try self.transport?.write(MQTTPacketCodec.subscribePacket(packetID: packetID, topic: topic))
+        try self.transport?.write(MQTTPacketCodec.subscribePacket(packetID: packetID, topic: topic, protocolVersion: self.config?.protocolVersion ?? .v5))
     }
 
     private func allocatePacketID() -> UInt16 {
@@ -118,7 +118,7 @@ actor MqttClientCore {
     private func handlePacket(typeAndFlags: UInt8, body: [UInt8]) {
         switch typeAndFlags >> 4 {
         case 3:
-            guard let message = try? MQTTPacketCodec.decodePublish(typeAndFlags: typeAndFlags, body: body) else { return }
+            guard let message = try? MQTTPacketCodec.decodePublish(typeAndFlags: typeAndFlags, body: body, protocolVersion: self.config?.protocolVersion ?? .v5) else { return }
             let listeners = self.subscriptions
                 .filter { MQTTTopicMatcher.matches(filter: $0.key, topic: message.topic) }
                 .flatMap(\.value)

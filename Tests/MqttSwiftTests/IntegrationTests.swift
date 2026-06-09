@@ -12,6 +12,13 @@ struct IntegrationTests {
     }
 
     @Test
+    func connectsWithMQTT311Credentials() async throws {
+        let client = MqttClient()
+        try await client.connect(config: self.authenticatedMQTT311Config())
+        await client.disconnect()
+    }
+
+    @Test
     func connectsAnonymously() async throws {
         let client = MqttClient()
         try await client.connect(config: self.anonymousConfig())
@@ -70,6 +77,15 @@ struct IntegrationTests {
             host: self.testHost,
             port: 1883,
             auth: .credentials(username: "tomek", password: "coder")
+        )
+    }
+
+    private func authenticatedMQTT311Config() -> MqttConfig {
+        MqttConfig(
+            host: self.testHost,
+            port: 1883,
+            auth: .credentials(username: "tomek", password: "coder"),
+            protocolVersion: .v3_1_1
         )
     }
 

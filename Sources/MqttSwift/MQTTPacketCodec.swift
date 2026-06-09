@@ -4,7 +4,7 @@ enum MQTTPacketCodec {
     static func connectPacket(clientID: String, config: MqttConfig, keepAlive: UInt16) -> [UInt8] {
         var variableHeader: [UInt8] = []
         self.appendUTF8String("MQTT", to: &variableHeader)
-        variableHeader.append(5)
+        variableHeader.append(config.protocolVersion.level)
 
         var flags: UInt8 = 0b0000_0010
         switch config.auth {
@@ -15,7 +15,9 @@ enum MQTTPacketCodec {
         }
         variableHeader.append(flags)
         self.appendUInt16(keepAlive, to: &variableHeader)
-        variableHeader.append(0)
+        if config.protocolVersion == .v5 {
+            variableHeader.append(0)
+        }
 
         var payload: [UInt8] = []
         self.appendUTF8String(clientID, to: &payload)
@@ -27,20 +29,24 @@ enum MQTTPacketCodec {
         return self.fixedHeader(typeAndFlags: 0x10, remainingLength: variableHeader.count + payload.count) + variableHeader + payload
     }
 
-    static func publishPacket(_ message: MqttMessage) -> [UInt8] {
+    static func publishPacket(_ message: MqttMessage, protocolVersion: MqttProtocolVersion = .v5) -> [UInt8] {
         var variableHeader: [UInt8] = []
         self.appendUTF8String(message.topic, to: &variableHeader)
-        variableHeader.append(0)
+        if protocolVersion == .v5 {
+            variableHeader.append(0)
+        }
 
         let payload = Array(message.message.utf8)
         let flags: UInt8 = message.retained ? 0x31 : 0x30
         return self.fixedHeader(typeAndFlags: flags, remainingLength: variableHeader.count + payload.count) + variableHeader + payload
     }
 
-    static func subscribePacket(packetID: UInt16, topic: String) -> [UInt8] {
+    static func subscribePacket(packetID: UInt16, topic: String, protocolVersion: MqttProtocolVersion = .v5) -> [UInt8] {
         var variableHeader: [UInt8] = []
         self.appendUInt16(packetID, to: &variableHeader)
-        variableHeader.append(0)
+        if protocolVersion == .v5 {
+            variableHeader.append(0)
+        }
 
         var payload: [UInt8] = []
         self.appendUTF8String(topic, to: &payload)
@@ -57,13 +63,18 @@ enum MQTTPacketCodec {
         [0xE0, 0x00]
     }
 
-    static func validateConnack(typeAndFlags: UInt8, body: [UInt8]) throws {
-        guard typeAndFlags == 0x20, body.count >= 3 else { throw MQTTError.invalidPacket }
+    static func validateConnack(typeAndFlags: UInt8, body: [UInt8], protocolVersion: MqttProtocolVersion = .v5) throws {
+        switch protocolVersion {
+        case .v3_1_1:
+            guard typeAndFlags == 0x20, body.count == 2 else { throw MQTTError.invalidPacket }
+        case .v5:
+            guard typeAndFlags == 0x20, body.count >= 3 else { throw MQTTError.invalidPacket }
+        }
         let reasonCode = body[1]
         guard reasonCode == 0 else { throw MQTTError.connectionRefused(reasonCode: reasonCode) }
     }
 
-    static func decodePublish(typeAndFlags: UInt8, body: [UInt8]) throws -> MqttMessage {
+    static func decodePublish(typeAndFlags: UInt8, body: [UInt8], protocolVersion: MqttProtocolVersion = .v5) throws -> MqttMessage {
         var index = 0
         let topic = try readUTF8String(from: body, index: &index)
         let qos = (typeAndFlags & 0b0000_0110) >> 1
@@ -71,9 +82,11 @@ enum MQTTPacketCodec {
             guard index + 2 <= body.count else { throw MQTTError.invalidPacket }
             index += 2
         }
-        let propertyLength = try readVariableByteInteger(from: body, index: &index)
-        guard index + propertyLength <= body.count else { throw MQTTError.invalidPacket }
-        index += propertyLength
+        if protocolVersion == .v5 {
+            let propertyLength = try readVariableByteInteger(from: body, index: &index)
+            guard index + propertyLength <= body.count else { throw MQTTError.invalidPacket }
+            index += propertyLength
+        }
         guard index <= body.count else { throw MQTTError.invalidPacket }
         let payload = Data(body[index...])
         guard let text = String(data: payload, encoding: .utf8) else { throw MQTTError.malformedString }
